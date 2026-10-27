@@ -1127,7 +1127,37 @@ class VisionIPTVTab(QtWidgets.QWidget):
         except Exception as e:
             self.playlist_status.setText(self.tr(f"❌ Error removing: {e}"))
  
+    # ===================================
+    #          LICENSE GATES
+    # ===================================
+    def _license_allows_channel(self, url):
+        import licensing
+        if licensing.can_play_channel(url):
+            return True
+        self.show_info(self.tr('Daily channel limit reached.'))
+        self._offer_activation(licensing.limit_message(self.tr))
+        return False
+
+    def _license_allows_recording(self):
+        import licensing
+        if licensing.recording_allowed():
+            return True
+        self.show_info(self.tr('Recording is not available without a license.'))
+        self._offer_activation(licensing.recording_message(self.tr))
+        return False
+
+    def _offer_activation(self, text):
+        window = self.window()
+        box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Information, 'VisionPro IPTV', text, parent=window)
+        activate = box.addButton(self.tr('Activate license...'), QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(self.tr('Close'), QtWidgets.QMessageBox.RejectRole)
+        box.exec_()
+        if box.clickedButton() is activate and hasattr(window, 'open_activation_dialog'):
+            window.open_activation_dialog()
+
     def record_selected(self, url):
+        if not self._license_allows_recording():
+            return
         item = self.playlist_tree.currentItem()
         name = item.text(0).removeprefix('⭐ ') if item else 'channel'
         self.recorder.start(url, name)
@@ -1137,6 +1167,8 @@ class VisionIPTVTab(QtWidgets.QWidget):
         url = item.data(0, QtCore.Qt.UserRole)
         if not url:
             item.setExpanded(not item.isExpanded())
+            return
+        if not self._license_allows_channel(url):
             return
  
         self.current_url = url
@@ -1417,6 +1449,8 @@ class VisionIPTVTab(QtWidgets.QWidget):
     def start_recording(self):
         if not self.current_url:
             self.show_info(self.tr('No channel selected.'))
+            return
+        if not self._license_allows_recording():
             return
         self.recorder.start(self.current_url, getattr(self, '_state_channel_name', 'channel'))
 

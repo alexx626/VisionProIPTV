@@ -7,6 +7,7 @@ from pathlib import Path
 from PyQt5 import QtWidgets, QtGui, QtCore
 from tabs.vision_iptv_core import VisionIPTVTab
 from player_services import preferences, show_about, settings, flag
+import licensing
 from localization import Translator
 
 # ------------------------------------------------------------
@@ -266,6 +267,19 @@ class VisionMainWindow(QtWidgets.QMainWindow):
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
 
+        # --- STARE LICENȚĂ (Trial / Înregistrat / Neactivat) — click deschide activarea ---
+        self.license_label = QtWidgets.QLabel()
+        self.license_label.setCursor(QtCore.Qt.PointingHandCursor)
+        self.license_label.setToolTip(self.tr("Click to activate or buy the lifetime license"))
+        self.license_label.mousePressEvent = lambda event: self.open_activation_dialog()
+        title_layout.addWidget(self.license_label)
+        title_layout.addSpacing(12)
+        self._license_timer = QtCore.QTimer(self)
+        self._license_timer.setInterval(60000)
+        self._license_timer.timeout.connect(self.refresh_license_status)
+        self._license_timer.start()
+        self.refresh_license_status()
+
         # --- BUTOANE ---
         btn_min = QtWidgets.QPushButton("—")
         btn_min.setFixedSize(28, 22)
@@ -349,6 +363,10 @@ class VisionMainWindow(QtWidgets.QMainWindow):
         about_action = QtWidgets.QAction(self.tr("About VisionPro IPTV"), self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+        activate_action = QtWidgets.QAction(f"🔑 {self.tr('Activate license...')}", self)
+        activate_action.triggered.connect(self.open_activation_dialog)
+        help_menu.addAction(activate_action)
 
         # 🔹 adăugăm menubar-ul în layout, imediat sub titlu
         main_layout.addWidget(self.menu_bar)
@@ -832,6 +850,10 @@ class VisionMainWindow(QtWidgets.QMainWindow):
             about_action.triggered.connect(self.show_about)
             help_menu.addAction(about_action)
 
+            activate_action = QtWidgets.QAction(f"🔑 {tr('Activate license...')}", self)
+            activate_action.triggered.connect(self.open_activation_dialog)
+            help_menu.addAction(activate_action)
+
             # --- Donate ---
             donate_action = QtWidgets.QAction(f"💙 {tr('Donate 5 EUR')}", self)
             donate_action.triggered.connect(self.donate)
@@ -847,6 +869,10 @@ class VisionMainWindow(QtWidgets.QMainWindow):
 
             for button, icon, key in self.toolbar_buttons:
                 button.setText(f'{icon} {tr(key)}')
+
+            if hasattr(self, "license_label"):
+                self.license_label.setToolTip(tr("Click to activate or buy the lifetime license"))
+                self.refresh_license_status()
 
             # === Footer ===
             if hasattr(self, "footer_text"):
@@ -868,6 +894,24 @@ class VisionMainWindow(QtWidgets.QMainWindow):
     # ======================================
     def show_about(self):
         show_about(self)
+
+    # ======================================
+    #             LICENȚĂ / ACTIVARE
+    # ======================================
+    def refresh_license_status(self):
+        """Actualizează eticheta din bara de titlu și titlul ferestrei după starea licenței."""
+        try:
+            text = licensing.status_text(self.tr)
+            self.license_label.setText(text)
+            self.license_label.setStyleSheet(f"color: {licensing.status_color()}; font-size: 12px; font-weight: bold; "
+                                             "padding: 2px 10px; border: 1px solid #1E3A52; border-radius: 9px; background: #0E2233;")
+            self.setWindowTitle(f"VisionPro IPTV — {text}")
+        except Exception as e:
+            print(f"[⚠️] refresh_license_status(): {e}")
+
+    def open_activation_dialog(self):
+        licensing.activation_dialog(self)
+        self.refresh_license_status()
 
     def donate(self):
         """Deschide pagina PayPal pentru donație 5 EUR."""

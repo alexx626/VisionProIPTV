@@ -51,11 +51,14 @@ https://riverbankcomputing.com/commercial/license-faq
 https://www.videolan.org/legal.html
 https://ffmpeg.org/legal.html
 External playlist availability/rights are independent of the player.
-No payment, trial restrictions or activation system is implemented.
+Licensing: 60-day trial on first run, then free mode (10 different channels/day, no recording).
+Lifetime license (5 EUR, PayPal) is an Ed25519-signed code tied to the buyer's email, issued with
+tools\keygen.py (private key in keys\, never shipped). Activation: Help > Activate license.
+Trial start is stored in config.ini and %LOCALAPPDATA%\VisionProIPTV\install.dat.
 
 DEVELOPMENT CHECKS
 Use PYTHONUTF8=1 with venv\Scripts\python.exe for tests.
-tests\check_playlist_ui.py, tests\check_restore.py, tests\check_release.py, tests\check_preferences.py
+tests\check_playlist_ui.py, tests\check_restore.py, tests\check_release.py, tests\check_preferences.py, tests\check_license.py
 tests\check_recording.py <ffmpeg.exe> <ffprobe.exe>   (e.g. vendor\ffmpeg\ffmpeg.exe vendor\ffmpeg\ffprobe.exe)
 GUI regression tests use mocked VLC; verify real playback/fullscreen/minimize separately.
 Validated dependencies: PyQt5 5.15.11, PyQt5-Qt5 5.15.2, PyQt5-sip 12.18.0,

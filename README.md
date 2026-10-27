@@ -11,6 +11,8 @@ recording through FFmpeg. Created and developed by AleXx626.
 - Unlimited, 5 / 10 minute or custom recording duration with a quick 1–180 min slider
 - FFmpeg detection: Preferences path → FFmpeg bundled with the app → system PATH
 - Romanian / English interface
+- Licensing: 60-day trial, then free mode (10 different channels per day, no recording) or a
+  5 EUR lifetime license tied to the buyer's email (Help > Activate license...)
 
 ## Run from source
 
@@ -27,6 +29,16 @@ VLC 64-bit must be installed (https://www.videolan.org/vlc/).
 Run `build_visionpro.bat` (PyInstaller, see `BUILD_README.txt`). Put `ffmpeg.exe` in
 `vendor\ffmpeg\` first to ship FFmpeg inside `dist\VisionProIPTV` (see `vendor\README.txt`).
 
+## Issuing license codes (owner only)
+
+```
+venv\Scripts\python tools\keygen.py init            (once; paste the public key into licensing.py)
+venv\Scripts\python tools\keygen.py issue buyer@example.com
+```
+
+`keys\private.key` is git-ignored — back it up and never publish it. Codes are Ed25519-signed
+(`licensing_protocol.py`) and only work with the email they were issued for.
+
 ## Tests
 
 ```
@@ -36,6 +48,7 @@ venv\Scripts\python tests\check_restore.py
 venv\Scripts\python tests\check_release.py
 venv\Scripts\python tests\check_preferences.py
 venv\Scripts\python tests\check_licensing_protocol.py
+venv\Scripts\python tests\check_license.py
 venv\Scripts\python tests\check_recording.py vendor\ffmpeg\ffmpeg.exe vendor\ffmpeg\ffprobe.exe
 ```
 
