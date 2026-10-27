@@ -36,6 +36,10 @@ venv\Scripts\python tools\keygen.py init            (once; paste the public key 
 venv\Scripts\python tools\keygen.py issue buyer@example.com
 ```
 
+GUI alternative: `build_keygen.bat` builds `dist_keygen\VisionProKeygen.exe` (single file, run it from
+anywhere): pick `keys\private.key` once, type the customer's email, Generate — the code is copied to the
+clipboard, appended to `issued_codes.txt` next to the key, and can be saved as a per-customer .txt.
+
 `keys\private.key` is git-ignored — back it up and never publish it. Codes are Ed25519-signed
 (`licensing_protocol.py`) and only work with the email they were issued for.
 
@@ -49,6 +53,7 @@ venv\Scripts\python tests\check_release.py
 venv\Scripts\python tests\check_preferences.py
 venv\Scripts\python tests\check_licensing_protocol.py
 venv\Scripts\python tests\check_license.py
+venv\Scripts\python tests\check_keygen_gui.py
 venv\Scripts\python tests\check_recording.py vendor\ffmpeg\ffmpeg.exe vendor\ffmpeg\ffprobe.exe
 ```
 
