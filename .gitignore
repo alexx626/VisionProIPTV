@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# PyInstaller output
+build/
+dist/
+build_archive/
+*.manifest
+
+# Logs
+*.log
+
+# Large / third-party binaries (download separately, see BUILD_README.txt)
+vendor/*
+!vendor/README.txt
+
+# User data: playlists, recordings, screenshots, probes
+*.m3u
+*.m3u8
+Recordings/
+sorted_playlists/
+screenshot_*.png
+tests/tmp*/
+tests/session-save-probe.json
+
+# OS / IDE
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

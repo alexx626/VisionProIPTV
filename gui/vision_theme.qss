@@ -1,0 +1,99 @@
+/* ==========================================================
+   VisionPro IPTV – Dark Blue Theme
+   ========================================================== */
+
+QMainWindow {
+    background-color: #101010;
+}
+
+/* -------------------------------
+   BUTTONS (uniform look)
+   ------------------------------- */
+QPushButton {
+    background-color: #1B3144;
+    color: #E0E0E0;
+    border: 1px solid #0E2638;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 14px;
+}
+
+QPushButton:hover {
+    background-color: #00A8FF;
+    color: #000000;
+}
+
+QPushButton:pressed {
+    background-color: #007ACC;
+    color: #FFFFFF;
+}
+
+/* -------------------------------
+   LABELS
+   ------------------------------- */
+QLabel {
+    color: #CCCCCC;
+}
+
+/* -------------------------------
+   INPUTS (search, forms)
+   ------------------------------- */
+QLineEdit {
+    background-color: #181818;
+    color: #DDDDDD;
+    border: 1px solid #333333;
+    border-radius: 4px;
+    padding: 4px;
+}
+
+QLineEdit:focus {
+    border: 1px solid #00A8FF;
+    background-color: #141C22;
+}
+
+/* -------------------------------
+   MENUS
+   ------------------------------- */
+QMenu {
+    background-color: #151515;
+    color: #E0E0E0;
+    border: 1px solid #303030;
+}
+
+QMenu::item:selected {
+    background-color: #00AA66;
+    color: #FFFFFF;
+}
+
+/* -------------------------------
+   SCROLLBARS DARK BLUE
+   ------------------------------- */
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #0D1A24;
+    border: none;
+    width: 12px;
+    height: 12px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #00A8FF;
+    border-radius: 6px;
+    min-height: 20px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:hover {
+    background: #00C0FF;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    background: transparent;
+    border: none;
+    width: 0px;
+    height: 0px;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: #0D1A24;
+}
