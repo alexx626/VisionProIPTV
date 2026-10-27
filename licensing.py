@@ -178,7 +178,9 @@ def activation_dialog(window):
     state.setWordWrap(True)
     state.setStyleSheet('font-size:14px;font-weight:bold;padding:10px;background:#172b3b;border-radius:8px;')
     layout.addWidget(state)
-    form = QtWidgets.QFormLayout()
+    form_widget = QtWidgets.QWidget()
+    form = QtWidgets.QFormLayout(form_widget)
+    form.setContentsMargins(0, 0, 0, 0)
     email = QtWidgets.QLineEdit(str(cfg.value('License/email', '') or ''))
     email.setPlaceholderText(tr('The email address used for the purchase'))
     code = QtWidgets.QPlainTextEdit(str(cfg.value('License/token', '') or ''))
@@ -186,7 +188,7 @@ def activation_dialog(window):
     code.setFixedHeight(90)
     form.addRow(tr('Email'), email)
     form.addRow(tr('Activation code'), code)
-    layout.addLayout(form)
+    layout.addWidget(form_widget)
     help_text = QtWidgets.QLabel(tr('Lifetime license: {0}, one email, all future versions. After paying with PayPal, send the PayPal email to {1} and you receive the code by email.').format(PRICE_TEXT, CONTACT_EMAIL))
     help_text.setWordWrap(True)
     help_text.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
@@ -204,9 +206,13 @@ def activation_dialog(window):
     layout.addLayout(buttons)
 
     def refresh():
-        state.setText(status_text(tr))
+        # Registered: show only the status and the option to remove the code - nothing to buy or enter.
+        registered = licensed_data() is not None
+        state.setText(status_text(tr) + ('  ✔' if registered else ''))
         state.setStyleSheet(state.styleSheet() + f'color:{status_color()};')
-        remove_button.setVisible(licensed_data() is not None)
+        for widget in (form_widget, help_text, buy, activate_button):
+            widget.setVisible(not registered)
+        remove_button.setVisible(registered)
         if hasattr(window, 'refresh_license_status'):
             window.refresh_license_status()
 
@@ -218,6 +224,7 @@ def activation_dialog(window):
             return
         message.setText('<span style="color:#7be37f">' + tr('License activated for {0}. Thank you!').format(data['email']) + '</span>')
         refresh()
+        dialog.adjustSize()
 
     def do_remove():
         deactivate()

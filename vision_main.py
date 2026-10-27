@@ -871,7 +871,6 @@ class VisionMainWindow(QtWidgets.QMainWindow):
                 button.setText(f'{icon} {tr(key)}')
 
             if hasattr(self, "license_label"):
-                self.license_label.setToolTip(tr("Click to activate or buy the lifetime license"))
                 self.refresh_license_status()
 
             # === Footer ===
@@ -902,9 +901,15 @@ class VisionMainWindow(QtWidgets.QMainWindow):
         """Actualizează eticheta din bara de titlu și titlul ferestrei după starea licenței."""
         try:
             text = licensing.status_text(self.tr)
-            self.license_label.setText(text)
+            registered = licensing.status()['kind'] == 'licensed'
+            self.license_label.setText(('✔ ' if registered else '') + text)
             self.license_label.setStyleSheet(f"color: {licensing.status_color()}; font-size: 12px; font-weight: bold; "
                                              "padding: 2px 10px; border: 1px solid #1E3A52; border-radius: 9px; background: #0E2233;")
+            # Registered: plain status text, no click target; otherwise click opens activation.
+            self.license_label.setCursor(QtCore.Qt.ArrowCursor if registered else QtCore.Qt.PointingHandCursor)
+            self.license_label.setToolTip(self.tr("Lifetime license active on this computer") if registered
+                                          else self.tr("Click to activate or buy the lifetime license"))
+            self.license_label.mousePressEvent = (lambda event: None) if registered else (lambda event: self.open_activation_dialog())
             self.setWindowTitle(f"VisionPro IPTV — {text}")
         except Exception as e:
             print(f"[⚠️] refresh_license_status(): {e}")

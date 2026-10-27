@@ -15,7 +15,7 @@ os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 sys.modules['vlc'] = MagicMock()
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from PyQt5 import QtWidgets
+from PyQt5 import QtCore, QtWidgets
 import licensing
 from licensing_protocol import PRODUCT, b64encode
 from player_services import settings
@@ -101,3 +101,17 @@ dialog.findChild(QtWidgets.QPlainTextEdit).setPlainText(token)
 next(b for b in dialog.findChildren(QtWidgets.QPushButton) if b.text() == 'Activează').click()
 assert licensing.status(now)['kind'] == 'licensed'
 print('PASS: lifetime activation by email, RO/EN status, activation dialog')
+
+# Registered view: badge is not clickable, dialog hides buy/activate/fields and shows only Remove/Close.
+window.refresh_license_status()
+assert window.license_label.cursor().shape() == QtCore.Qt.ArrowCursor and window.license_label.text().startswith('✔')
+captured.clear()
+with patch.object(QtWidgets.QDialog, 'exec_', lambda d: captured.setdefault('dialog', d) and 0):
+    licensing.activation_dialog(window)
+dialog = captured['dialog']
+buttons = {b.text(): b for b in dialog.findChildren(QtWidgets.QPushButton)}
+assert not buttons['Activează'].isVisibleTo(dialog) and not any(t.startswith('Cumpără') and b.isVisibleTo(dialog) for t, b in buttons.items())
+assert buttons['Șterge codul'].isVisibleTo(dialog) and not dialog.findChild(QtWidgets.QPlainTextEdit).isVisibleTo(dialog)
+licensing.deactivate(); window.refresh_license_status()
+assert window.license_label.cursor().shape() == QtCore.Qt.PointingHandCursor
+print('PASS: registered state shows plain badge and a dialog without buy/activate controls')

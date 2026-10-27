@@ -281,5 +281,6 @@
   "Enter a valid email address.": "Enter a valid email address.",
   "Invalid activation code.": "Invalid activation code.",
   "The code belongs to a different email address.": "The code belongs to a different email address.",
-  "The 60-day trial has expired.": "The 60-day trial has expired."
+  "The 60-day trial has expired.": "The 60-day trial has expired.",
+  "Lifetime license active on this computer": "Lifetime license active on this computer"
 }

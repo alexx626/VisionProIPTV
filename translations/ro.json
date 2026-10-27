@@ -287,5 +287,6 @@
   "Enter a valid email address.": "Introdu o adresă de email validă.",
   "Invalid activation code.": "Cod de activare invalid.",
   "The code belongs to a different email address.": "Codul aparține altei adrese de email.",
-  "The 60-day trial has expired.": "Trialul de 60 de zile a expirat."
+  "The 60-day trial has expired.": "Trialul de 60 de zile a expirat.",
+  "Lifetime license active on this computer": "Licență lifetime activă pe acest calculator"
 }
