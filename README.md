@@ -39,7 +39,8 @@ venv\Scripts\python tests\check_licensing_protocol.py
 venv\Scripts\python tests\check_recording.py vendor\ffmpeg\ffmpeg.exe vendor\ffmpeg\ffprobe.exe
 ```
 
-## Licensing
+## License
 
-PyQt5 is GPLv3 (or commercial); FFmpeg builds from BtbN are GPL. Choose a compatible license
-before public redistribution — see `BUILD_README.txt` for notes and links.
+VisionPro IPTV is released under the GNU General Public License v3.0 (see `LICENSE`),
+compatible with PyQt5 (GPLv3) and the GPL FFmpeg builds from BtbN. VLC is not redistributed.
+The application does not provide TV subscriptions or guarantee the availability of external streams.
