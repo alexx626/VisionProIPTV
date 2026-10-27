@@ -39,3 +39,7 @@ Thumbs.db
 keys/
 dist_keygen/
 build_keygen/
+
+# Local export copies of the build (zip and share, never commit)
+For EXPORT/
+*.zip
