@@ -131,6 +131,9 @@ class VisionApp(QtWidgets.QApplication):
         self.main_window.installEventFilter(self)
         self.aboutToQuit.connect(self.save_window_state)
         self.aboutToQuit.connect(self.main_window.iptv_tab.save_session)
+        # Canalele din lume (iptv-org) se încarcă din cache / se descarcă în fundal, ca pe TV.
+        if not os.environ.get('VISIONPRO_NO_ONLINE'):
+            QtCore.QTimer.singleShot(1500, self.main_window.iptv_tab.load_online_channels)
 
     def eventFilter(self, obj, event):
         if obj is self.main_window and event.type() in (

@@ -19,7 +19,7 @@ tab = VisionIPTVTab()
 tab.resize(1000, 600)
 tab.show()
 started = time.perf_counter()
-tab._load_playlist_file(str(Path(__file__).resolve().parents[1] / '6304cannel.m3u'))
+tab._load_playlist_file(str(Path(__file__).resolve().parents[1] / '3152channel.m3u'))
 tree = tab.playlist_tree
 urls = []
 iterator = QtWidgets.QTreeWidgetItemIterator(tree)

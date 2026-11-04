@@ -25,7 +25,7 @@ settings.setValue('Favorites/list', 'Test::https://example.test/channel')
 settings.setValue('LastPlaylist/path', 'keep-me.m3u')
 tab.slider_volume.setValue(37)
 settings.sync()
-tab._load_playlist_file(str(Path(__file__).resolve().parents[1] / '6304cannel.m3u'))
+tab._load_playlist_file(str(Path(__file__).resolve().parents[1] / '3152channel.m3u'))
 tab.playlist_tree.expandAll()
 for _ in range(3):
     window.showMinimized()
@@ -40,7 +40,7 @@ for _ in range(3):
     QtTest.QTest.qWait(200)
 app.save_window_state()
 settings.sync()
-assert Path(settings.value('LastPlaylist/path')).name == '6304cannel.m3u'
+assert Path(settings.value('LastPlaylist/path')).name == '3152channel.m3u'
 assert settings.value('Settings/volume', type=int) == 37
 assert settings.value('Favorites/list').startswith('Test::')
 tab.search_box.setText('BBC')

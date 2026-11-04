@@ -5,6 +5,9 @@ datas = [(str(root / 'gui/vision_theme.qss'), 'gui'),
          (str(root / 'icons/*.png'), 'icons'), (str(root / 'icons/*.ico'), 'icons'),
          (str(root / 'translations/*.json'), 'translations'),
          (str(root / 'BUILD_README.txt'), '.')]
+# Playlists shipped inside the app (playlists/*.m3u) - loaded on first start, like playlist.m3u on the TV.
+if (root / 'playlists').is_dir() and list((root / 'playlists').glob('*.m3u*')):
+    datas.append((str(root / 'playlists/*.m3u*'), 'playlists'))
 # Optional bundled FFmpeg: drop ffmpeg.exe (and its LICENSE) in vendor/ffmpeg/ before building.
 # It is shipped as _internal/ffmpeg/ffmpeg.exe and detected automatically by player_services.ffmpeg_path().
 binaries = []

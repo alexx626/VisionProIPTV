@@ -14,12 +14,53 @@ CONFIG_PATH = Path(os.getenv("APPDATA")) / "VisionProIPTV" / "config.ini"
 CONFIG_PATH.parent.mkdir(exist_ok=True)
  
  
+import channel_sources
+
+NUMBER_ROLE = QtCore.Qt.UserRole + 1
+SUBTITLE_ROLE = QtCore.Qt.UserRole + 2
+GROUP_KEY_ROLE = QtCore.Qt.UserRole + 3
+MAX_RECENTS = 30
+
+
+class ChannelDelegate(QtWidgets.QStyledItemDelegate):
+    """Draws the channel number in a dim column on the left, like the TV list."""
+    NUMBER_WIDTH = 54
+
+    def paint(self, painter, option, index):
+        number = index.data(NUMBER_ROLE)
+        if not number:
+            return super().paint(painter, option, index)
+        opt = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        widget = opt.widget
+        style = widget.style() if widget else QtWidgets.QApplication.style()
+        background = QtWidgets.QStyleOptionViewItem(opt)
+        background.text = ''
+        style.drawControl(QtWidgets.QStyle.CE_ItemViewItem, background, painter, widget)
+        text = QtWidgets.QStyleOptionViewItem(opt)
+        text.rect = opt.rect.adjusted(self.NUMBER_WIDTH, 0, 0, 0)
+        style.drawControl(QtWidgets.QStyle.CE_ItemViewItem, text, painter, widget)
+        painter.save()
+        selected = bool(opt.state & QtWidgets.QStyle.State_Selected)
+        painter.setPen(QtGui.QColor('#0A2233' if selected else '#5E8BAA'))
+        painter.drawText(QtCore.QRect(opt.rect.left() + 6, opt.rect.top(), self.NUMBER_WIDTH - 12, opt.rect.height()),
+                         QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter, str(number))
+        painter.restore()
+
+
 class VisionIPTVTab(QtWidgets.QWidget):
     """Fereastra principală VisionPro IPTV – player + playlist + tray."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self._parent = parent
         self.current_url = None
+        # Channel model (url -> dict): numbers, categories and countries like VisionPro IPTV Pro on the TV.
+        self.channels = {}
+        self._next_number = 1
+        self.view_mode = 'category'      # 'category' | 'country' | 'group'
+        self.current_view = 'all'        # 'all' | 'fav' | 'recent' | 'group:<name>'
+        self._online_worker = None
+        self._rebuilding = False
  
         # ===============================
         #     INSTANȚĂ VLC + VARIABILE
@@ -193,15 +234,68 @@ class VisionIPTVTab(QtWidgets.QWidget):
         self.playlist_tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.playlist_tree.customContextMenuRequested.connect(self._show_tree_menu)
  
-        # helper pentru categorii
-        self.tree_helper = VisionTreeHelper(self.playlist_tree)
+        self.playlist_tree.setItemDelegate(ChannelDelegate(self.playlist_tree))
+        self.playlist_tree.setIndentation(0)
+        self.playlist_tree.setRootIsDecorated(False)
+
+        # helper pentru categorii (înregistrează și în modelul de canale)
+        self.tree_helper = VisionTreeHelper(self.playlist_tree, self)
+
+        # === Sidebar categorii (ca pe TV): Căutare / Favorite / Recente / Toate + categorii cu număr ===
+        self.sidebar_frame = QtWidgets.QFrame()
+        self.sidebar_frame.setFixedWidth(210)
+        self.sidebar_frame.setStyleSheet("""
+            QFrame { background-color: #0B1521; border-right: 1px solid #0E2638; }
+            QLabel#sideTitle { color: #7FB4D6; font-size: 13px; font-weight: bold; padding: 8px 10px 4px 10px; }
+            QPushButton { background: #13283A; color: #B8CEDD; border-radius: 4px; padding: 4px 6px; font-size: 11px; }
+            QPushButton:checked { background: #00A8FF; color: #000; }
+            QListWidget { background: transparent; border: 0; outline: 0; font-size: 13px; color: #D6E6F2; }
+            QListWidget::item { padding: 6px 8px; }
+            QListWidget::item:selected { background: #00A8FF; color: #000; border-radius: 4px; }
+            QListWidget::item:hover { background: #122636; color: #00A8FF; }
+            QListWidget::item:disabled { color: #4E6C84; font-size: 10px; }
+        """)
+        sidebar_layout = QtWidgets.QVBoxLayout(self.sidebar_frame)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(2)
+        self.sidebar_title = QtWidgets.QLabel(self.tr("Categories"))
+        self.sidebar_title.setObjectName("sideTitle")
+        sidebar_layout.addWidget(self.sidebar_title)
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.setContentsMargins(8, 0, 8, 4)
+        mode_row.setSpacing(4)
+        self.mode_buttons = {}
+        for mode, label in (('category', 'Categories'), ('country', 'Countries'), ('group', 'Groups')):
+            button = QtWidgets.QPushButton(self.tr(label))
+            button.setCheckable(True)
+            button.setChecked(mode == self.view_mode)
+            button.clicked.connect(lambda checked, m=mode: self.set_view_mode(m))
+            self.mode_buttons[mode] = button
+            mode_row.addWidget(button)
+        sidebar_layout.addLayout(mode_row)
+        self.category_list = QtWidgets.QListWidget()
+        self.category_list.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.category_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.category_list.setTextElideMode(QtCore.Qt.ElideRight)
+        self.category_list.setWordWrap(False)
+        self.category_list.currentItemChanged.connect(lambda current, previous: self._sidebar_selected(current))
+        self.category_list.itemClicked.connect(self._sidebar_selected)
+        sidebar_layout.addWidget(self.category_list, 1)
+        self.channel_badge = QtWidgets.QLabel()
+        self.channel_badge.setStyleSheet("color: #7be37f; font-size: 11px; font-weight: bold; padding: 0 6px;")
  
         # === Layout vertical playlist + status ===
         playlist_layout = QtWidgets.QVBoxLayout()
         playlist_layout.setContentsMargins(0, 0, 0, 0)
         playlist_layout.setSpacing(2)
+        top_layout.addWidget(self.channel_badge)
         playlist_layout.addWidget(top_playlist_frame)
-        playlist_layout.addWidget(self.playlist_tree)
+        lists_row = QtWidgets.QHBoxLayout()
+        lists_row.setContentsMargins(0, 0, 0, 0)
+        lists_row.setSpacing(0)
+        lists_row.addWidget(self.sidebar_frame)
+        lists_row.addWidget(self.playlist_tree, 1)
+        playlist_layout.addLayout(lists_row, 1)
  
         # === Status label sub playlist ===
         self.playlist_status = QtWidgets.QLabel("No playlist loaded")
@@ -222,7 +316,7 @@ class VisionIPTVTab(QtWidgets.QWidget):
         playlist_frame = QtWidgets.QFrame()
         self.playlist_frame = playlist_frame
         playlist_frame.setLayout(playlist_layout)
-        playlist_frame.setMinimumWidth(260)
+        playlist_frame.setMinimumWidth(470)
         self.workspace_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self.workspace_splitter.setChildrenCollapsible(False)
         self.workspace_splitter.setHandleWidth(6)
@@ -241,7 +335,8 @@ class VisionIPTVTab(QtWidgets.QWidget):
         self.now_playing = QtWidgets.QLabel("Select a channel to start watching")
         self.now_playing.setMinimumWidth(0)
         self.now_playing.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
-        self.now_playing.setFixedHeight(36)
+        self.now_playing.setFixedHeight(48)
+        self.now_playing.setTextFormat(QtCore.Qt.RichText)
         self.now_playing.setStyleSheet(
             "background: #101F2C; color: #A7CCE5; padding: 0 14px; font-size: 13px;")
         right_side.addWidget(self.now_playing)
@@ -511,168 +606,246 @@ class VisionIPTVTab(QtWidgets.QWidget):
         cfg.sync()
  
     def _load_playlist_file(self, path):
-        """VisionPro IPTV Smart Hybrid Mode – rapid, non-blocking, cu detectare inteligentă a țărilor."""
-        import re
- 
+        """Încarcă un M3U în modelul de canale (categorii TV + țări) și reconstruiește lista."""
         if not os.path.exists(path):
             QtWidgets.QMessageBox.warning(self, self.tr("Error"), self.tr(f"Playlist not found:\n{path}"))
             return
- 
-        # ------------------------------------------------------------
-        #  Resetare arbore și stare
-        # ------------------------------------------------------------
-        self.playlist_tree.clear()
-        self.tree_helper.categories.clear()
         self.playlist_status.setText(self.tr("Loading playlist (smart hybrid)..."))
         self._last_playlist_path = path
         QtCore.QCoreApplication.processEvents()
- 
-        # ------------------------------------------------------------
-        #  Dicționar indicii – detecție automată țări
-        # ------------------------------------------------------------
-        COUNTRY_HINTS = {
-            # România
-            "romania": "Romania", "tvr": "Romania", "pro tv": "Romania", "antena": "Romania",
-            "digi": "Romania", "kanal d": "Romania", "suceava": "Romania", "iasi": "Romania",
-            # Germania
-            "rtl": "Germany", "zdf": "Germany", "prosieben": "Germany", "ard": "Germany",
-            # Marea Britanie
-            "bbc": "United Kingdom", "sky": "United Kingdom", "itv": "United Kingdom",
-            # Italia
-            "rai": "Italy", "mediaset": "Italy",
-            # Franța
-            "tf1": "France", "canal+": "France", "france": "France",
-            # SUA
-            "hbo": "United States", "nbc": "United States", "cnn": "United States", "fox": "United States",
-            # Spania
-            "rtve": "Spain", "tve": "Spain", "antena 3": "Spain",
-            # Bulgaria
-            "btv": "Bulgaria", "nova": "Bulgaria",
-            # Turcia
-            "trt": "Turkey", "atv": "Turkey", "show tv": "Turkey"
-        }
- 
-        # ------------------------------------------------------------
-        #  CATEGORII FIXE SUS (mereu primele)
-        # ------------------------------------------------------------
-        fixed_categories = ["General", "Music", "Movies", "Sports", "News", "Kids"]
-        category_items = {}
- 
-        for cat in fixed_categories:
-            item = QtWidgets.QTreeWidgetItem([cat])
-            self.playlist_tree.addTopLevelItem(item)
-            category_items[cat] = item
- 
-        # ------------------------------------------------------------
-        #  ȚĂRILE (jos)
-        # ------------------------------------------------------------
-        country_items = {}
-        title = None
-        category, country = "General", "Unknown"
-        line_count = 0
-        total_channels = 0
-        seen_urls = set()
- 
         try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                for raw in f:
-                    line = raw.strip()
-                    line_count += 1
- 
-                    # Permite UI-ului să respire la fișiere mari
-                    if line_count % 200 == 0:
-                        QtCore.QCoreApplication.processEvents()
- 
-                    # ------------------------------------------------
-                    #  Linia #EXTINF (metadate)
-                    # ------------------------------------------------
-                    if line.startswith("#EXTINF"):
-                        parts = line.split(",", 1)
-                        title = parts[1].strip() if len(parts) > 1 else "Unknown"
- 
-                        # --- Extragem țara ---
-                        match_country = re.search(r'tvg-country\s*=\s*"([^"]+)"', line, re.IGNORECASE)
-                        if match_country:
-                            country = match_country.group(1).strip().title()
-                        else:
-                            country = "Unknown"
- 
-                        # 🧠 Detectare automată dacă e „Unknown”
-                        if country.lower() in ["", "unknown", "other"]:
-                            low_name = title.lower()
-                            for key, guess in COUNTRY_HINTS.items():
-                                if key in low_name:
-                                    country = guess
-                                    break
- 
-                        # --- Extragem categoria ---
-                        match_group = re.search(r'group-title\s*=\s*"([^"]+)"', line, re.IGNORECASE)
-                        if match_group:
-                            group = match_group.group(1).strip()
-                            if " - " in group:
-                                category = group.split(" - ", 1)[-1].strip().title()
-                            else:
-                                category = group.title()
-                        else:
-                            category = "General"
- 
-                        # Curățăm caracterele
-                        category = re.sub(r"[^\x00-\x7F]+", "", category).strip() or "General"
-                        country = re.sub(r"[^\x00-\x7F]+", "", country).strip() or "Unknown"
- 
-                    # ------------------------------------------------
-                    #  Linia cu URL-ul canalului
-                    # ------------------------------------------------
-                    elif line and not line.startswith("#"):
-                        if line in seen_urls:
-                            title = None
-                            continue
-                        seen_urls.add(line)
-                        name = title if title else os.path.basename(line)
-                        name = re.sub(r"(?:\s*\(Unknown\))+$", "", name, flags=re.IGNORECASE)
- 
-                        # 1️⃣ — Adaugă în categoria potrivită (fixă sau nouă)
-                        cat_name = category
-                        if cat_name not in category_items:
-                            new_item = QtWidgets.QTreeWidgetItem([cat_name])
-                            self.playlist_tree.insertTopLevelItem(len(category_items), new_item)
-                            category_items[cat_name] = new_item
- 
-                        cat_item = category_items[cat_name]
-                        ch_item = QtWidgets.QTreeWidgetItem([name])
-                        ch_item.setToolTip(0, f"{name} • {country} • {category}")
-                        ch_item.setData(0, QtCore.Qt.UserRole, line)
-                        cat_item.addChild(ch_item)
-                        total_channels += 1
- 
-                        title = None
- 
+            rows = channel_sources.load_file(path)
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, self.tr("Error"), self.tr(f"Could not load playlist:\n{e}"))
             return
- 
-        # ------------------------------------------------------------
-        #  Totul pliat implicit
-        # ------------------------------------------------------------
-        for i in range(self.playlist_tree.topLevelItemCount()):
-            item = self.playlist_tree.topLevelItem(i)
-            self.playlist_tree.collapseItem(item)
- 
-        # ------------------------------------------------------------
-        #  Afișare status + încărcare favorite
-        # ------------------------------------------------------------
-        self.tree_helper.categories = category_items
-        for group_item in category_items.values():
-            group_item.setHidden(group_item.childCount() == 0)
+        self._clear_channels(keep_online=True)
+        for row in rows:
+            self.register_channel(row, source='user')
+        self._rebuild_tree()
+        total = sum(1 for c in self.channels.values() if c['source'] != 'online')
         base = os.path.basename(path)
-        self.show_info(f"✅ Loaded playlist: {base} ({total_channels} channels, Smart Hybrid + AutoCountry)")
-        self.playlist_status.setText(self.tr(f"Loaded {total_channels} channels (auto categories + countries)"))
- 
+        self.show_info(f"✅ Loaded playlist: {base} ({total} channels, Smart Hybrid + AutoCountry)")
+        self.playlist_status.setText(self.tr(f"Loaded {total} channels (auto categories + countries)"))
+
+    # ===================================
+    #     CHANNEL MODEL (ca pe TV)
+    # ===================================
+    def register_channel(self, row, source='user'):
+        """Adaugă un canal în model (număr fix per sesiune). Returnează intrarea sau None dacă există."""
+        url = (row.get('url') or '').strip()
+        if not url or url in self.channels:
+            return None
+        name = (row.get('name') or os.path.basename(url)).strip() or 'Channel'
+        group = (row.get('group') or 'General').strip() or 'General'
+        entry = {'n': self._next_number, 'name': name, 'url': url, 'group': group,
+                 'category': row.get('category') or channel_sources.categorize({'group': group, 'name': name, 'cats': row.get('cats', [])}),
+                 'country': row.get('country') or channel_sources.guess_country({'name': name, 'country': ''}),
+                 'logo': row.get('logo', ''), 'source': source}
+        self._next_number += 1
+        self.channels[url] = entry
+        return entry
+
+    def _clear_channels(self, keep_online=False):
+        if keep_online:
+            self.channels = {u: c for u, c in self.channels.items() if c['source'] == 'online'}
+        else:
+            self.channels = {}
+        if not self.channels:
+            self._next_number = 1
+        self.playlist_tree.clear()
+        self.tree_helper.categories.clear()
+
+    def _group_key(self, entry):
+        if self.view_mode == 'country':
+            return entry['country'] or 'International'
+        if self.view_mode == 'group':
+            return entry['group'] or 'General'
+        return entry['category']
+
+    def _group_order(self, names):
+        if self.view_mode == 'category':
+            order = {label: i for i, label in enumerate(channel_sources.CATEGORY_LABELS)}
+            return sorted(names, key=lambda n: (order.get(n, 999), n.lower()))
+        if self.view_mode == 'country':
+            pinned = ['Romania', 'Germany', 'Moldova', 'Italy', 'Spain', 'United Kingdom', 'United States', 'France']
+            return sorted(names, key=lambda n: (n == 'International', pinned.index(n) if n in pinned else 99, n.lower()))
+        return list(names)
+
+    def _display_group(self, name):
+        return self.tr(name) if self.view_mode == 'category' else name
+
+    def _rebuild_tree(self):
+        """Reconstruiește arborele din model după modul curent (categorii / țări / grupuri)."""
+        self._rebuilding = True
         try:
+            selected = self.current_url
+            self.playlist_tree.setRootIndex(QtCore.QModelIndex())
+            self.playlist_tree.clear()
+            self.tree_helper.categories.clear()
+            groups = {}
+            for entry in self.channels.values():
+                groups.setdefault(self._group_key(entry), []).append(entry)
+            for name in self._group_order(list(groups)):
+                group_item = QtWidgets.QTreeWidgetItem([self._display_group(name)])
+                group_item.setData(0, GROUP_KEY_ROLE, name)
+                self.playlist_tree.addTopLevelItem(group_item)
+                self.tree_helper.categories[name] = group_item
+                self.tree_helper.categories[self._display_group(name)] = group_item
+                for entry in groups[name]:
+                    group_item.addChild(self._make_item(entry))
             self.load_favorites()
-        except Exception as e:
-            print(f"[⚠️] Favorite load error: {e}")
- 
+            self._refresh_sidebar()
+            self._apply_view()
+            if selected:
+                for item in self._iter_channel_items():
+                    if item.data(0, QtCore.Qt.UserRole) == selected:
+                        self.playlist_tree.setCurrentItem(item)
+                        break
+        finally:
+            self._rebuilding = False
+
+    def _make_item(self, entry):
+        item = QtWidgets.QTreeWidgetItem([entry['name']])
+        item.setData(0, QtCore.Qt.UserRole, entry['url'])
+        item.setData(0, NUMBER_ROLE, entry['n'])
+        item.setData(0, SUBTITLE_ROLE, self._subtitle(entry))
+        item.setToolTip(0, f"{entry['n']}  {entry['name']} • {self._subtitle(entry)}")
+        return item
+
+    def _update_now_playing(self, url, channel_name):
+        """Sub video: număr + nume pe prima linie, categorie • țară pe a doua (ca pe TV)."""
+        entry = self.channels.get(url)
+        number = f"{entry['n']}  " if entry else ''
+        subtitle = self._subtitle(entry) if entry else ''
+        self.now_playing.setText(f'<span style="font-size:14px;color:#EAF4FB">▶  <b>{number}{channel_name}</b></span>'
+                                 + (f'<br><span style="font-size:11px;color:#7FB4D6">{subtitle}</span>' if subtitle else ''))
+        self.now_playing.setToolTip(channel_name)
+
+    def _subtitle(self, entry):
+        parts = [self.tr(entry['category'])]
+        if entry['country']:
+            parts.append(entry['country'])
+        if entry['source'] == 'online':
+            parts.append(self.tr('world'))
+        return ' • '.join(parts)
+
+    def _iter_channel_items(self):
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            group = self.playlist_tree.topLevelItem(i)
+            for j in range(group.childCount()):
+                yield group.child(j)
+
+    def set_view_mode(self, mode):
+        self.view_mode = mode
+        for key, button in self.mode_buttons.items():
+            button.setChecked(key == mode)
+        self.current_view = 'all'
+        self._rebuild_tree()
+
+    # ---------- sidebar ----------
+    def _favorite_urls(self):
+        favorites = settings().value("Favorites/list", "")
+        return {f.split("::", 1)[1] for f in (favorites.split("|") if favorites else []) if "::" in f}
+
+    def _recent_urls(self):
+        raw = settings().value('Recents/list', '')
+        return [u for u in str(raw).split('|') if u] if raw else []
+
+    def _remember_recent(self, url):
+        recents = [u for u in self._recent_urls() if u != url]
+        recents.insert(0, url)
+        cfg = settings()
+        cfg.setValue('Recents/list', '|'.join(recents[:MAX_RECENTS]))
+        cfg.sync()
+        self._refresh_sidebar_counts()
+
+    def _refresh_sidebar(self):
+        lst = self.category_list
+        lst.blockSignals(True)
+        lst.clear()
+        def add(key, text, count=None, selectable=True):
+            item = QtWidgets.QListWidgetItem(text)
+            item.setData(QtCore.Qt.UserRole, key)
+            item.setData(QtCore.Qt.UserRole + 1, count)
+            if not selectable:
+                item.setFlags(QtCore.Qt.NoItemFlags)
+            lst.addItem(item)
+            return item
+        add('search', '🔍 ' + self.tr('Search'))
+        add('fav', '★ ' + self.tr('Favorites'), 0)
+        add('recent', '⟲ ' + self.tr('Recent'), 0)
+        add('all', '☰ ' + self.tr('All channels'), 0)
+        add('header', self.tr({'category': 'CATEGORIES', 'country': 'COUNTRIES', 'group': 'GROUPS'}[self.view_mode]), selectable=False)
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            group = self.playlist_tree.topLevelItem(i)
+            add('group:' + str(group.data(0, GROUP_KEY_ROLE)), group.text(0), group.childCount())
+        lst.blockSignals(False)
+        self._refresh_sidebar_counts()
+        self._select_sidebar(self.current_view)
+
+    def _refresh_sidebar_counts(self):
+        lst = self.category_list
+        favorites, recents = self._favorite_urls(), set(self._recent_urls())
+        counts = {'fav': sum(1 for u in self.channels if u in favorites),
+                  'recent': sum(1 for u in self.channels if u in recents), 'all': len(self.channels)}
+        for i in range(lst.count()):
+            item = lst.item(i)
+            key = item.data(QtCore.Qt.UserRole)
+            count = counts.get(key, item.data(QtCore.Qt.UserRole + 1))
+            base = item.text().split('   ')[0]
+            item.setText(base if count is None else f"{base}   {count}")
+        online = sum(1 for c in self.channels.values() if c['source'] == 'online')
+        badge = self.tr('{0} channels').format(len(self.channels))
+        if online:
+            badge += ' (+' + self.tr('{0} world').format(online) + ')'
+        self.channel_badge.setText('✔ ' + badge if self.channels else '')
+
+    def _select_sidebar(self, key):
+        lst = self.category_list
+        lst.blockSignals(True)
+        for i in range(lst.count()):
+            if lst.item(i).data(QtCore.Qt.UserRole) == key:
+                lst.setCurrentRow(i)
+                break
+        else:
+            lst.setCurrentRow(3 if lst.count() > 3 else -1)
+        lst.blockSignals(False)
+
+    def _sidebar_selected(self, item):
+        if item is None or self._rebuilding:
+            return
+        key = item.data(QtCore.Qt.UserRole)
+        if key == 'search':
+            self.search_box.setFocus()
+            self.search_box.selectAll()
+            self._select_sidebar(self.current_view)
+            return
+        if key == 'header':
+            return
+        self.current_view = key
+        self.btn_fav.blockSignals(True)
+        self.btn_fav.setChecked(key == 'fav')
+        self.btn_fav.setText(self.tr("📺 Show All" if key == 'fav' else "⭐ Favorites"))
+        self.btn_fav.blockSignals(False)
+        self._apply_view()
+
+    def _apply_view(self):
+        """Aplică vizualizarea curentă: toate / favorite / recente / un singur grup (listă plată, ca pe TV)."""
+        tree = self.playlist_tree
+        if self.current_view.startswith('group:'):
+            name = self.current_view[6:]
+            group_item = self.tree_helper.categories.get(name)
+            if group_item is None:
+                self.current_view = 'all'
+                return self._apply_view()
+            group_item.setExpanded(True)
+            tree.setRootIndex(tree.indexFromItem(group_item))
+        else:
+            tree.setRootIndex(QtCore.QModelIndex())
+            tree.expandAll()
+        self.filter_playlist(self.search_box.text())
+        tree.scrollToTop()
+
     def load_playlist(self):
         """Deschide un fișier M3U nou și îl salvează în config.ini (QTreeWidget version)."""
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -729,36 +902,11 @@ class VisionIPTVTab(QtWidgets.QWidget):
             return
  
         try:
-            import re
             added_count = 0
-            seen = {self.playlist_tree.topLevelItem(i).child(j).data(0, QtCore.Qt.UserRole)
-                    for i in range(self.playlist_tree.topLevelItemCount())
-                    for j in range(self.playlist_tree.topLevelItem(i).childCount())}
-            category = 'Other' 
- 
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
- 
-            title = None
-            for raw in lines:
-                line = raw.strip()
-                if line.startswith("#EXTINF"):
-                    parts = line.split(",", 1)
-                    title = parts[1].strip() if len(parts) > 1 else "Unknown"
-                    match = re.search(r'group-title="([^"]+)"', line)
-                    category = match.group(1).strip() if match else "Other"
-                elif line and not line.startswith("#"):
-                    name = title if title else os.path.basename(line)
-                    if line in seen:
-                        title = None
-                        continue
-                    seen.add(line)
-                    name = re.sub(r'(?:\s*\(Unknown\))+$', '', name).strip()
- 
-                    # Adaugă canalul în arbore (append logic)
-                    self.tree_helper.add_channel(category, name, line)
+            for row in channel_sources.load_file(path):
+                if self.register_channel(row, source='user'):
                     added_count += 1
-                    title = None
+            self._rebuild_tree()
  
             # feedback
             self.playlist_status.setText(self.tr(f"➕ Appended {added_count} channels from {os.path.basename(path)}"))
@@ -803,8 +951,9 @@ class VisionIPTVTab(QtWidgets.QWidget):
                 seen = set()
                 for row in payload['channels']:
                     if row['url'] not in seen:
-                        self.tree_helper.add_channel(row.get('group', 'General'), row['name'], row['url'])
+                        self.register_channel(row, source='user')
                         seen.add(row['url'])
+                self._rebuild_tree()
                 self._last_playlist_path = payload.get('source', '')
                 QtCore.QTimer.singleShot(0, lambda: self._restore_session_view(payload))
                 return
@@ -823,26 +972,80 @@ class VisionIPTVTab(QtWidgets.QWidget):
                 self.show_info(f"Loaded last playlist: {os.path.basename(last_path)}")
                 self.playlist_status.setText(self.tr(f"Loaded {total} channels"))
             else:
-                self.playlist_status.setText(self.tr("No saved playlist found."))
+                bundled = channel_sources.bundled_playlists()
+                if bundled:
+                    self._load_playlist_file(str(bundled[0]))
+                else:
+                    self.playlist_status.setText(self.tr("No saved playlist found."))
         except Exception as e:
             self.playlist_status.setText(self.tr(f"⚠️ Error loading last playlist: {e}"))
             self.show_info(f"⚠️ Error loading last playlist: {e}")
+
+    # ===================================
+    #     CANALE ONLINE (iptv-org, ca pe TV)
+    # ===================================
+    def load_online_channels(self, force=False):
+        """Canalele din lume: din cache imediat, apoi descărcare în fundal dacă e vechi de peste 24h."""
+        if not flag('Settings/online_channels', True):
+            self._drop_online_channels()
+            return
+        rows, fetched_at = channel_sources.read_cache()
+        if rows and not any(c['source'] == 'online' for c in self.channels.values()):
+            self._merge_online(rows)
+        if force or not channel_sources.cache_is_fresh(fetched_at):
+            self.refresh_online_channels()
+
+    def refresh_online_channels(self):
+        if self._online_worker is not None and self._online_worker.isRunning():
+            return
+        self.playlist_status.setText(self.tr('Downloading world channels...'))
+        self._online_worker = channel_sources.OnlineChannels(self)
+        self._online_worker.finished_with.connect(self._online_finished)
+        self._online_worker.start()
+
+    def _online_finished(self, rows, error):
+        if error:
+            self.playlist_status.setText(self.tr('World channels could not be updated.') + ' ' + error[:80])
+            return
+        self._drop_online_channels(rebuild=False)
+        self._merge_online(rows)
+        self.playlist_status.setText(self.tr('{0} world channels updated.').format(len(rows)))
+
+    def _merge_online(self, rows):
+        added = 0
+        for row in rows:
+            if self.register_channel(row, source='online'):
+                added += 1
+        if added:
+            self._rebuild_tree()
+        return added
+
+    def _drop_online_channels(self, rebuild=True):
+        if any(c['source'] == 'online' for c in self.channels.values()):
+            self.channels = {u: c for u, c in self.channels.items() if c['source'] != 'online'}
+            if rebuild:
+                self._rebuild_tree()
  
     def filter_playlist(self, text):
         """Filtrează canalele după textul introdus (QTreeWidget version)."""
         text = text.lower().strip()
-        is_fav_mode = self.btn_fav.isChecked()
- 
-        cfg = QtCore.QSettings(str(CONFIG_PATH), QtCore.QSettings.IniFormat)
-        favorites = cfg.value("Favorites/list", "")
-        fav_list = favorites.split("|") if favorites else []
-        fav_urls = {f.split("::", 1)[1] for f in fav_list if "::" in f}
+        if self.btn_fav.isChecked() and self.current_view != 'fav':
+            self.current_view = 'fav'
+            self._select_sidebar('fav')
+        elif not self.btn_fav.isChecked() and self.current_view == 'fav':
+            self.current_view = 'all'
+            self._select_sidebar('all')
+        is_fav_mode = self.current_view == 'fav'
+        recent_urls = set(self._recent_urls()) if self.current_view == 'recent' else None
+        fav_urls = self._favorite_urls()
  
         visible_count = 0
+        root_key = self.current_view[6:] if self.current_view.startswith('group:') else None
  
         for i in range(self.playlist_tree.topLevelItemCount()):
             cat_item = self.playlist_tree.topLevelItem(i)
             cat_visible = False
+            in_root = root_key is None or cat_item.data(0, GROUP_KEY_ROLE) == root_key
             for j in range(cat_item.childCount()):
                 ch_item = cat_item.child(j)
                 url = ch_item.data(0, QtCore.Qt.UserRole)
@@ -850,13 +1053,16 @@ class VisionIPTVTab(QtWidgets.QWidget):
  
                 in_fav = url in fav_urls
                 visible = (text in name) and (in_fav if is_fav_mode else True)
+                if recent_urls is not None and url not in recent_urls:
+                    visible = False
  
                 ch_item.setHidden(not visible)
                 if visible:
                     cat_visible = True
-                    visible_count += 1
+                    if in_root:
+                        visible_count += 1
             cat_item.setHidden(not cat_visible)
-            if text and cat_visible:
+            if (text or self.current_view != 'all') and cat_visible:
                 cat_item.setExpanded(True)
  
         self.playlist_status.setText(self.tr(f"🔍 Found {visible_count} results"))
@@ -977,6 +1183,7 @@ class VisionIPTVTab(QtWidgets.QWidget):
                         ch_item.setFont(0, font)
                         break
  
+            self._refresh_sidebar_counts()
             self.playlist_status.setText(self.tr(f"⭐ Added to favorites: {clean_name}"))
             self.show_info(f"⭐ Added to favorites: {clean_name}")
  
@@ -1011,6 +1218,7 @@ class VisionIPTVTab(QtWidgets.QWidget):
                             ch_item.setFont(0, font)
                             break
  
+                self._refresh_sidebar_counts()
                 self.playlist_status.setText(self.tr(f"💔 Removed from favorites: {name}"))
                 self.show_info(f"💔 Removed from favorites: {name}")
             else:
@@ -1051,7 +1259,9 @@ class VisionIPTVTab(QtWidgets.QWidget):
  
     def toggle_favorites_view(self):
         self.btn_fav.setText(self.tr("📺 Show All" if self.btn_fav.isChecked() else "⭐ Favorites"))
-        self.filter_playlist(self.search_box.text())
+        self.current_view = 'fav' if self.btn_fav.isChecked() else 'all'
+        self._select_sidebar(self.current_view)
+        self._apply_view()
 
     def remove_permanent(self, item):
         """Șterge canalul din fișierul M3U și îl elimină vizual cu fade-out (QTreeWidget version)."""
@@ -1174,8 +1384,8 @@ class VisionIPTVTab(QtWidgets.QWidget):
         self.current_url = url
         self.player.video_set_aspect_ratio(str(settings().value('Settings/aspect', '')) or None)
         channel_name = item.text(0).replace("⭐ ", "")
-        self.now_playing.setText(f"▶  {channel_name}")
-        self.now_playing.setToolTip(channel_name)
+        self._update_now_playing(url, channel_name)
+        self._remember_recent(url)
  
         media = self._media_with_headers(url)
         self.player.set_hwnd(self.video_frame.winId())
@@ -1355,18 +1565,7 @@ class VisionIPTVTab(QtWidgets.QWidget):
             if not category.strip():
                 category = "Manual"
  
-            # Obținem sau creăm categoria
-            if category not in self.tree_helper.categories:
-                cat_item = QTreeWidgetItem([category])
-                self.playlist_tree.addTopLevelItem(cat_item)
-                self.tree_helper.categories[category] = cat_item
-            else:
-                cat_item = self.tree_helper.categories[category]
- 
-            # Adăugăm canalul nou
-            ch_item = QTreeWidgetItem([os.path.basename(url.strip())])
-            ch_item.setData(0, QtCore.Qt.UserRole, url.strip())
-            cat_item.addChild(ch_item)
+            self.tree_helper.add_channel(category, os.path.basename(url.strip()), url.strip())
  
             self.playlist_status.setText(self.tr(f"✅ Added stream: {url.strip()}"))
             self.show_info(f"Added stream to '{category}'")
@@ -1428,8 +1627,8 @@ class VisionIPTVTab(QtWidgets.QWidget):
     def clear_playlist(self):
         """Curăță complet lista de canale și categoriile din arbore."""
         try:
-            self.playlist_tree.clear()
-            self.tree_helper.categories.clear()
+            self._clear_channels(keep_online=False)
+            self._rebuild_tree()
             self.playlist_status.setText(self.tr("🧹 Playlist cleared."))
             self.show_info("🧹 Playlist cleared successfully.")
  
@@ -1472,14 +1671,8 @@ class VisionIPTVTab(QtWidgets.QWidget):
 
     def save_session(self):
         import json
-        rows = []
-        for i in range(self.playlist_tree.topLevelItemCount()):
-            group = self.playlist_tree.topLevelItem(i)
-            for j in range(group.childCount()):
-                item = group.child(j)
-                url = item.data(0, QtCore.Qt.UserRole)
-                if url:
-                    rows.append({'name': item.text(0).removeprefix('⭐ '), 'url': url, 'group': group.text(0)})
+        rows = [{'name': c['name'], 'url': c['url'], 'group': c['group'], 'country': c['country'], 'logo': c['logo']}
+                for c in self.channels.values() if c['source'] != 'online']
         payload = {'channels': rows, 'source': self._last_playlist_path,
                    'selected': self.current_url, 'search': self.search_box.text(),
                    'favorites_only': self.btn_fav.isChecked(),
@@ -1511,8 +1704,10 @@ class VisionIPTVTab(QtWidgets.QWidget):
                     self._state_channel_name = item.text(0)
         self.load_favorites()
         self.btn_fav.setChecked(payload.get('favorites_only', False))
+        self.current_view = 'fav' if self.btn_fav.isChecked() else 'all'
+        self._select_sidebar(self.current_view)
         self.search_box.setText(payload.get('search', ''))
-        self.filter_playlist(self.search_box.text())
+        self._apply_view()
         self.playlist_tree.verticalScrollBar().setValue(payload.get('scroll', 0))
         if selected and flag('Settings/autoplay'):
             self.play_current()
@@ -1561,9 +1756,17 @@ class VisionIPTVTab(QtWidgets.QWidget):
  
             if hasattr(self, "search_box"):
                 self.search_box.setPlaceholderText(tr("Search channel..."))
+            if hasattr(self, "mode_buttons"):
+                for mode, label in (('category', 'Categories'), ('country', 'Countries'), ('group', 'Groups')):
+                    self.mode_buttons[mode].setText(tr(label))
+                self.sidebar_title.setText(tr("Categories"))
+                self._rebuild_tree()
  
             self.filter_playlist(self.search_box.text())
-            self.now_playing.setText('▶  ' + self._state_channel_name if getattr(self, '_state_channel_name', '') else tr('Select a channel to start watching'))
+            if getattr(self, '_state_channel_name', '') and self.current_url:
+                self._update_now_playing(self.current_url, self._state_channel_name)
+            else:
+                self.now_playing.setText(tr('Select a channel to start watching'))
 
             # === Eticheta de înregistrare ===
             if hasattr(self, "rec_label"):
@@ -1665,17 +1868,37 @@ class VisionIPTVTab(QtWidgets.QWidget):
 #  QTreeWidget Helper – management categorii + canale
 # ------------------------------------------------------------
 class VisionTreeHelper:
-    def __init__(self, tree_widget):
+    def __init__(self, tree_widget, tab=None):
         self.tree = tree_widget
+        self.tab = tab
         self.categories = {}
  
     def add_channel(self, category, name, url):
+        """Adaugă un canal în model și în arbore, în grupul potrivit modului curent."""
+        entry = None
+        if self.tab is not None:
+            entry = self.tab.register_channel({'name': name, 'url': url, 'group': category}, source='user')
+            if entry is None:
+                return
+            category = self.tab._group_key(entry)
+        try:
+            stale = category in self.categories and self.tree.indexOfTopLevelItem(self.categories[category]) < 0
+        except RuntimeError:  # the tree was cleared and the old group item deleted
+            stale = True
+        if stale:
+            self.categories = {k: v for k, v in self.categories.items() if v is not self.categories.get(category)}
         if category not in self.categories:
-            cat_item = QTreeWidgetItem([category])
-            cat_item.setFlags(cat_item.flags() | QtCore.Qt.ItemIsTristate | QtCore.Qt.ItemIsUserCheckable)
+            cat_item = QTreeWidgetItem([self.tab._display_group(category) if self.tab else category])
+            cat_item.setData(0, GROUP_KEY_ROLE, category)
             self.tree.addTopLevelItem(cat_item)
             self.categories[category] = cat_item
- 
-        ch_item = QTreeWidgetItem([name])
-        ch_item.setData(0, QtCore.Qt.UserRole, url)
+            if self.tab:
+                self.categories[self.tab._display_group(category)] = cat_item
+        if entry is not None:
+            ch_item = self.tab._make_item(entry)
+        else:
+            ch_item = QTreeWidgetItem([name])
+            ch_item.setData(0, QtCore.Qt.UserRole, url)
         self.categories[category].addChild(ch_item)
+        if self.tab is not None and not self.tab._rebuilding:
+            self.tab._refresh_sidebar()

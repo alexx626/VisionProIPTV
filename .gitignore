@@ -43,3 +43,10 @@ build_keygen/
 # Local export copies of the build (zip and share, never commit)
 For EXPORT/
 *.zip
+
+# VisionPro TV kit (contains the private Samsung certificate) - never commit
+KIT LAPTOP*/
+*.p12
+*.pwd
+VisionPro Link*.exe
+!playlists/README.txt
