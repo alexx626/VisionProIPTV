@@ -50,3 +50,14 @@ KIT LAPTOP*/
 *.pwd
 VisionPro Link*.exe
 !playlists/README.txt
+
+# Samsung TV app + installer (local only, repo-ul e public)
+TV App (Samsung)/
+Playlist Builder/
+Instalare pe TV.ps1
+INSTALEAZA PE TV.bat
+PORNIRE AUTOMATA LINK.bat
+TRIMITE 12345 LA TV.bat
+Trimite 12345 la TV.ps1
+VisionProIPTV.wgt
+tv-ip.txt
